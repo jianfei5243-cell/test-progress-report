@@ -1,0 +1,9 @@
+.DS_Store
+__pycache__/
+*.pyc
+*.xlsx
+*.xls
+*.png
+*_测试报告.html
+测试进度汇总*.xlsx
+测试进度_模块执行率*.png
