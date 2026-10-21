@@ -243,7 +243,7 @@ def build_excel(path, data):
         ["不适用 N/A", na],
         ["待复测 Retest", rt],
         ["通过率", f"{ps/(total-na):.1%}"],
-        ["失败率", f"{fl/ex:.1%}"],
+        ["失败率", f"{fl/(total-na):.1%}"],
     ]
     for i, row in enumerate(summary, 1):
         for j, v in enumerate(row, 1):
@@ -364,7 +364,7 @@ def build_html(path, data, png_bytes, source_name, source_date):
         ("不适用 N/A", f"{na}"),
         ("待复测 Retest", f"{rt}"),
         ("通过率", f"{ps/(total-na):.1%}"),
-        ("失败率", f"{fl/ex:.1%}"),
+        ("失败率", f"{fl/(total-na):.1%}"),
     ]
     cards_html = "".join(
         f'<div class="card"><div class="k">{k}</div><div class="v">{v}</div></div>'
