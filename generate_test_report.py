@@ -152,7 +152,7 @@ def agg(c):
         "总": tot, "未执行": unt, "已执行": ex,
         "通过": ps, "失败": fl, "N/A": na, "Retest": rt,
         "执行率": round(ex / tot * 100, 1) if tot else 0.0,
-        "通过率": round(ps / ex * 100, 1) if ex else None,
+        "通过率": round(ps / (tot - na) * 100, 1) if (tot - na) else None,
     }
 
 
@@ -242,9 +242,8 @@ def build_excel(path, data):
         ["失败 Failed", fl],
         ["不适用 N/A", na],
         ["待复测 Retest", rt],
-        ["通过率（已执行口径）", f"{ps/ex:.1%}"],
-        ["通过率（剔除N/A口径）", f"{ps/(ps+fl+rt):.1%}"],
-        ["失败率（已执行口径）", f"{fl/ex:.1%}"],
+        ["通过率", f"{ps/(total-na):.1%}"],
+        ["失败率", f"{fl/ex:.1%}"],
     ]
     for i, row in enumerate(summary, 1):
         for j, v in enumerate(row, 1):
@@ -364,8 +363,7 @@ def build_html(path, data, png_bytes, source_name, source_date):
         ("失败 Failed", f"{fl}"),
         ("不适用 N/A", f"{na}"),
         ("待复测 Retest", f"{rt}"),
-        ("通过率(已执行)", f"{ps/ex:.1%}"),
-        ("通过率(剔除N/A)", f"{ps/(ps+fl+rt):.1%}"),
+        ("通过率", f"{ps/(total-na):.1%}"),
         ("失败率", f"{fl/ex:.1%}"),
     ]
     cards_html = "".join(
