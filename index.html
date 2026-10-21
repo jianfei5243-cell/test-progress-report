@@ -168,7 +168,7 @@ function render(data,filename){
     ["用例总数",data.total],["已执行",ex],["执行覆盖率",(ex/data.total*100).toFixed(1)+"%"],
     ["通过 Passed",ps],["失败 Failed",fl],["不适用 N/A",na],["待复测 Retest",rt],
     ["通过率",(ps/(data.total-na)*100).toFixed(1)+"%"],
-    ["失败率",(fl/ex*100).toFixed(1)+"%"]
+    ["失败率",(fl/(data.total-na)*100).toFixed(1)+"%"]
   ];
   document.getElementById("cards").innerHTML=cards.map(function(c){return '<div class="card"><div class="k">'+c[0]+'</div><div class="v'+(c[0]==="失败率"||c[0]==="失败 Failed"?" bad":"")+'">'+c[1]+'</div></div>';}).join("");
 
@@ -234,7 +234,7 @@ document.getElementById("file").addEventListener("change",function(e){handleFile
 function buildStandaloneHtml(data,chartDataUrl,filename){
   var o=data.overall,unt=o["Untested"]||0,ex=data.total-unt;
   var ps=o["Passed"]||0,fl=o["Failed"]||0,na=o["N/A"]||0,rt=o["Retest"]||0;
-  var cards=[["用例总数",data.total],["已执行",ex],["执行覆盖率",(ex/data.total*100).toFixed(1)+"%"],["通过 Passed",ps],["失败 Failed",fl],["不适用 N/A",na],["待复测 Retest",rt],["通过率",(ps/(data.total-na)*100).toFixed(1)+"%"],["失败率",(fl/ex*100).toFixed(1)+"%"]];
+  var cards=[["用例总数",data.total],["已执行",ex],["执行覆盖率",(ex/data.total*100).toFixed(1)+"%"],["通过 Passed",ps],["失败 Failed",fl],["不适用 N/A",na],["待复测 Retest",rt],["通过率",(ps/(data.total-na)*100).toFixed(1)+"%"],["失败率",(fl/(data.total-na)*100).toFixed(1)+"%"]];
   var cardsHtml=cards.map(function(c){return '<div class="card"><div class="k">'+c[0]+'</div><div class="v">'+c[1]+'</div></div>';}).join("");
   var modHtml=tableHtml(sortedAgg(data.mod),HEADERS);
   var runHtml=tableHtml(sortedAgg(data.run),HEADERS);
@@ -283,7 +283,7 @@ function sheetXml(rows){
 function buildExcel(data,filename){
   var o=data.overall,unt=o["Untested"]||0,ex=data.total-unt;
   var ps=o["Passed"]||0,fl=o["Failed"]||0,na=o["N/A"]||0,rt=o["Retest"]||0;
-  var s1=[["指标","数值"],["用例总数",data.total],["未执行 Untested",unt],["已执行",ex],["执行覆盖率",(ex/data.total*100).toFixed(1)+"%"],["通过 Passed",ps],["失败 Failed",fl],["不适用 N/A",na],["待复测 Retest",rt],["通过率",(ps/(data.total-na)*100).toFixed(1)+"%"],["失败率",(fl/ex*100).toFixed(1)+"%"]];
+  var s1=[["指标","数值"],["用例总数",data.total],["未执行 Untested",unt],["已执行",ex],["执行覆盖率",(ex/data.total*100).toFixed(1)+"%"],["通过 Passed",ps],["失败 Failed",fl],["不适用 N/A",na],["待复测 Retest",rt],["通过率",(ps/(data.total-na)*100).toFixed(1)+"%"],["失败率",(fl/(data.total-na)*100).toFixed(1)+"%"]];
   function rows(items){var r=[["模块","用例总数","未执行","通过","失败","N/A","Retest","执行率%","通过率%"]];items.forEach(function(it){r.push([it.name,it.a.total,it.a.untested,it.a.passed,it.a.failed,it.a.na,it.a.retest,it.a.rate,it.a.passRate==null?"-":it.a.passRate]);});return r;}
   var defs=Object.keys(data.defects).map(function(k){return[k,data.defects[k]];}).sort(function(a,b){return b[1]-a[1];}).slice(0,15);
   var s4=[["排名","缺陷编号","影响Case数"]];
