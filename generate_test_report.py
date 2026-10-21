@@ -282,10 +282,30 @@ def build_excel(path, data):
         ws.freeze_panes = "A2"
         return len(rows) + 1
 
+    def write_defects(ws, items):
+        headers = ["排名", "缺陷编号", "影响Case数"]
+        for j, h in enumerate(headers, 1):
+            c = ws.cell(1, j, h)
+            c.fill = hdr_fill
+            c.font = hdr_font
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            c.border = border
+        for rank, (d, n) in enumerate(items, 1):
+            for j, v in enumerate([rank, d, n], 1):
+                c = ws.cell(rank + 1, j, v)
+                c.border = border
+                c.alignment = Alignment(horizontal="center")
+        for j, w in enumerate([8, 22, 16], 1):
+            ws.column_dimensions[get_column_letter(j)].width = w
+        ws.freeze_panes = "A2"
+
     ws2 = wb.create_sheet("功能模块")
     n2 = write_table(ws2, data["mod"])
     ws3 = wb.create_sheet("测试批次")
     write_table(ws3, data["run"])
+
+    ws4 = wb.create_sheet("Top缺陷")
+    write_defects(ws4, data["defects"].most_common(15))
 
     topn = 15
     ch1 = BarChart()
