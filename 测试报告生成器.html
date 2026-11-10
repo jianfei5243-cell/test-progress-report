@@ -69,6 +69,8 @@ ul.def code{color:var(--red);}
     <div id="priTable"></div>
     <h2>Top 缺陷</h2>
     <ul class="def" id="defList"></ul>
+    <h2>Block 数据（挂起）</h2>
+    <table><thead><tr><th>排名</th><th>Case ID</th><th>标题</th><th>模块</th><th>负责人</th><th>说明</th></tr></thead><tbody id="blockList"></tbody></table>
     <h2>人力投入</h2>
     <div class="info" id="minutes"></div>
   </div>
@@ -92,10 +94,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 <script>
 (function(){
 "use strict";
-var C={folder:2,priority:11,run:33,status:35,estExec:3,estMh:4,execTime:37,mhTime:38,defects:42};
+var C={folder:2,priority:11,run:33,status:35,estExec:3,estMh:4,execTime:37,mhTime:38,defects:42,case:0,title:1,assigned:36,comment:45};
 var DATA=null;
 
 function decodeXml(s){return (s||"").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&amp;/g,"&").replace(/&#(\d+);/g,function(m,d){return String.fromCodePoint(parseInt(d,10));});}
+function plain(s){s=String(s==null?"":s);s=s.replace(/<[^>]+>/g,"");return decodeXml(s).trim();}
 function colToIndex(ref){var n=0;for(var i=0;i<ref.length;i++){n=n*26+(ref.charCodeAt(i)-64);}return n-1;}
 function parseSharedStrings(xml){var arr=[];if(!xml)return arr;var re=/<si[^>]*>([\s\S]*?)<\/si>/g,tre=/<t[^>]*>([\s\S]*?)<\/t>/g,m;while((m=re.exec(xml))){var s="",tm;tre.lastIndex=0;while((tm=tre.exec(m[1])))s+=tm[1];arr.push(decodeXml(s));}return arr;}
 function parseSheet(xml,shared){var rows=[];var rowRe=/<row[^>]*>([\s\S]*?)<\/row>/g,cRe=/<c([^>]*)>([\s\S]*?)<\/c>/g,m;while((m=rowRe.exec(xml))){var cells={},cm;cRe.lastIndex=0;while((cm=cRe.exec(m[1]))){var attrs=cm[1],body=cm[2];var ref=(attrs.match(/r="([A-Z]+)\d+"/)||[])[1];if(!ref)continue;var t=(attrs.match(/t="([^"]+)"/)||[])[1];var val;if(t==="inlineStr"){val=decodeXml((body.match(/<t[^>]*>([\s\S]*?)<\/t>/)||[])[1]||"");}else if(t==="s"){var v=(body.match(/<v>([\s\S]*?)<\/v>/)||[])[1];val=(v===undefined)?"":(shared[parseInt(v,10)]!=null?shared[parseInt(v,10)]:"");}else if(t==="b"){var vb=(body.match(/<v>([\s\S]*?)<\/v>/)||[])[1];val=(vb==="1")?"TRUE":"FALSE";}else{var vn=(body.match(/<v>([\s\S]*?)<\/v>/)||[])[1];val=(vn===undefined)?"":decodeXml(vn);}cells[colToIndex(ref)]=val;}rows.push(cells);}return rows;}
@@ -107,7 +110,7 @@ function agg(c){var tot=0,unt=0,ps=0,fl=0,na=0,rt=0;for(var k in c){var v=c[k];t
 function sortedAgg(map){return Object.keys(map).map(function(k){return{name:k,count:map[k],a:agg(map[k])};}).sort(function(x,y){return y.a.total-x.a.total;});}
 
 function aggregate(rows){
-  var mod={},run={},pri={},overall={},defects={};
+  var mod={},run={},pri={},overall={},defects={},blocked=[];
   var total=0,estExec=0,estMh=0,execT=0,mhT=0;
   for(var i=1;i<rows.length;i++){
     var r=rows[i];total++;
@@ -118,8 +121,9 @@ function aggregate(rows){
     if(p&&p!=="None"){(pri[p]=pri[p]||{})[st]=((pri[p][st])||0)+1;}
     estExec+=parseMinutes(r[C.estExec]);estMh+=parseMinutes(r[C.estMh]);execT+=parseMinutes(r[C.execTime]);mhT+=parseMinutes(r[C.mhTime]);
     if(st==="Failed"){var d=String(r[C.defects]||"");if(d&&d!=="None"){d.split(/[;,，\s]+/).forEach(function(x){x=x.trim();if(x)defects[x]=(defects[x]||0)+1;});}}
+    if(st==="Blocked"){blocked.push({case:String(r[C.case]||""),title:String(r[C.title]||""),module:(f&&f!=="None"?f.split(" > ")[0]:""),priority:p,run:rn,assigned:String(r[C.assigned]||""),comment:plain(r[C.comment])});}
   }
-  return{total:total,overall:overall,mod:mod,run:run,pri:pri,defects:defects,minutes:{estExec:estExec,estMh:estMh,exec:execT,mh:mhT}};
+  return{total:total,overall:overall,mod:mod,run:run,pri:pri,defects:defects,blocked:blocked,minutes:{estExec:estExec,estMh:estMh,exec:execT,mh:mhT}};
 }
 
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
@@ -167,6 +171,7 @@ function render(data,filename){
   var cards=[
     ["用例总数",data.total],["已执行",ex],["执行覆盖率",(ex/data.total*100).toFixed(1)+"%"],
     ["通过 Passed",ps],["失败 Failed",fl],["不适用 N/A",na],["待复测 Retest",rt],
+    ["Blocked Block",(o["Blocked"]||0)],
     ["通过率",(ps/(data.total-na)*100).toFixed(1)+"%"],
     ["失败率",(fl/(data.total-na)*100).toFixed(1)+"%"]
   ];
@@ -180,6 +185,7 @@ function render(data,filename){
 
   var defs=Object.keys(data.defects).map(function(k){return[k,data.defects[k]];}).sort(function(a,b){return b[1]-a[1];}).slice(0,15);
   document.getElementById("defList").innerHTML=defs.map(function(d){return "<li><code>"+esc(d[0])+"</code><span>"+d[1]+" 条</span></li>";}).join("");
+  document.getElementById("blockList").innerHTML=(data.blocked||[]).map(function(b,i){return "<tr><td>"+(i+1)+"</td><td>"+esc(b.case)+"</td><td class='l'>"+esc(b.title)+"</td><td>"+esc(b.module)+"</td><td>"+esc(b.assigned)+"</td><td class='l'>"+esc(b.comment)+"</td></tr>";}).join("");
 
   var m=data.minutes;
   document.getElementById("minutes").innerHTML="估算执行时长："+Math.round(m.estExec)+" 分钟 ｜ 实际执行时长："+Math.round(m.exec)+" 分钟<br/>估算人时："+Math.round(m.estMh)+" 分钟 ｜ 实际人时："+Math.round(m.mh)+" 分钟";
@@ -234,13 +240,14 @@ document.getElementById("file").addEventListener("change",function(e){handleFile
 function buildStandaloneHtml(data,chartDataUrl,filename){
   var o=data.overall,unt=o["Untested"]||0,ex=data.total-unt;
   var ps=o["Passed"]||0,fl=o["Failed"]||0,na=o["N/A"]||0,rt=o["Retest"]||0;
-  var cards=[["用例总数",data.total],["已执行",ex],["执行覆盖率",(ex/data.total*100).toFixed(1)+"%"],["通过 Passed",ps],["失败 Failed",fl],["不适用 N/A",na],["待复测 Retest",rt],["通过率",(ps/(data.total-na)*100).toFixed(1)+"%"],["失败率",(fl/(data.total-na)*100).toFixed(1)+"%"]];
+  var cards=[["用例总数",data.total],["已执行",ex],["执行覆盖率",(ex/data.total*100).toFixed(1)+"%"],["通过 Passed",ps],["失败 Failed",fl],["不适用 N/A",na],["待复测 Retest",rt],["Blocked Block",(o["Blocked"]||0)],["通过率",(ps/(data.total-na)*100).toFixed(1)+"%"],["失败率",(fl/(data.total-na)*100).toFixed(1)+"%"]];
   var cardsHtml=cards.map(function(c){return '<div class="card"><div class="k">'+c[0]+'</div><div class="v">'+c[1]+'</div></div>';}).join("");
   var modHtml=tableHtml(sortedAgg(data.mod),HEADERS);
   var runHtml=tableHtml(sortedAgg(data.run),HEADERS);
   var priHtml=tableHtml(sortedAgg(data.pri),HEADERS);
   var defs=Object.keys(data.defects).map(function(k){return[k,data.defects[k]];}).sort(function(a,b){return b[1]-a[1];}).slice(0,15);
   var defHtml=defs.map(function(d){return "<li><code>"+esc(d[0])+"</code><span>"+d[1]+" 条</span></li>";}).join("");
+  var blockHtml=(data.blocked||[]).map(function(b,i){return "<tr><td>"+(i+1)+"</td><td>"+esc(b.case)+"</td><td class='l'>"+esc(b.title)+"</td><td>"+esc(b.module)+"</td><td>"+esc(b.assigned)+"</td><td class='l'>"+esc(b.comment)+"</td></tr>";}).join("");
   var m=data.minutes;
   var now=new Date();
   return "<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'/><title>OS4.0 测试报告</title><style>"+
@@ -283,26 +290,29 @@ function sheetXml(rows){
 function buildExcel(data,filename){
   var o=data.overall,unt=o["Untested"]||0,ex=data.total-unt;
   var ps=o["Passed"]||0,fl=o["Failed"]||0,na=o["N/A"]||0,rt=o["Retest"]||0;
-  var s1=[["指标","数值"],["用例总数",data.total],["未执行 Untested",unt],["已执行",ex],["执行覆盖率",(ex/data.total*100).toFixed(1)+"%"],["通过 Passed",ps],["失败 Failed",fl],["不适用 N/A",na],["待复测 Retest",rt],["通过率",(ps/(data.total-na)*100).toFixed(1)+"%"],["失败率",(fl/(data.total-na)*100).toFixed(1)+"%"]];
+  var s1=[["指标","数值"],["用例总数",data.total],["未执行 Untested",unt],["已执行",ex],["执行覆盖率",(ex/data.total*100).toFixed(1)+"%"],["通过 Passed",ps],["失败 Failed",fl],["不适用 N/A",na],["待复测 Retest",rt],["Blocked Block",(o["Blocked"]||0)],["通过率",(ps/(data.total-na)*100).toFixed(1)+"%"],["失败率",(fl/(data.total-na)*100).toFixed(1)+"%"]];
   function rows(items){var r=[["模块","用例总数","未执行","通过","失败","N/A","Retest","执行率%","通过率%"]];items.forEach(function(it){r.push([it.name,it.a.total,it.a.untested,it.a.passed,it.a.failed,it.a.na,it.a.retest,it.a.rate,it.a.passRate==null?"-":it.a.passRate]);});return r;}
   var defs=Object.keys(data.defects).map(function(k){return[k,data.defects[k]];}).sort(function(a,b){return b[1]-a[1];}).slice(0,15);
   var s4=[["排名","缺陷编号","影响Case数"]];
   defs.forEach(function(d,i){s4.push([i+1,d[0],d[1]]);});
-  return {s1:s1,s2:rows(sortedAgg(data.mod)),s3:rows(sortedAgg(data.run)),s4:s4};
+  var s5=[["排名","Case ID","标题","模块","优先级","Run","负责人","说明"]];
+  (data.blocked||[]).forEach(function(b,i){s5.push([i+1,b.case,b.title,b.module,b.priority,b.run,b.assigned,b.comment]);});
+  return {s1:s1,s2:rows(sortedAgg(data.mod)),s3:rows(sortedAgg(data.run)),s4:s4,s5:s5};
 }
 document.getElementById("btnExcel").addEventListener("click",function(){
   if(!DATA)return;
   var d=buildExcel(DATA,window.__lastFilename);
   var zip=new JSZip();
-  zip.file("[Content_Types].xml",'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet3.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet4.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>');
+  zip.file("[Content_Types].xml",'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet3.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet4.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet5.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>');
   zip.file("_rels/.rels",'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');
-  zip.file("xl/workbook.xml",'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="总体进度" sheetId="1" r:id="rId1"/><sheet name="功能模块" sheetId="2" r:id="rId2"/><sheet name="测试批次" sheetId="3" r:id="rId3"/><sheet name="Top缺陷" sheetId="4" r:id="rId5"/></sheets></workbook>');
-  zip.file("xl/_rels/workbook.xml.rels",'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet3.xml"/><Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet4.xml"/></Relationships>');
+  zip.file("xl/workbook.xml",'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="总体进度" sheetId="1" r:id="rId1"/><sheet name="功能模块" sheetId="2" r:id="rId2"/><sheet name="测试批次" sheetId="3" r:id="rId3"/><sheet name="Top缺陷" sheetId="4" r:id="rId5"/><sheet name="Block数据" sheetId="5" r:id="rId6"/></sheets></workbook>');
+  zip.file("xl/_rels/workbook.xml.rels",'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet3.xml"/><Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet4.xml"/><Relationship Id="rId6" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet5.xml"/></Relationships>');
   zip.file("xl/styles.xml",'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><fills count="1"><fill><patternFill patternType="none"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs></styleSheet>');
   zip.file("xl/worksheets/sheet1.xml",sheetXml(d.s1));
   zip.file("xl/worksheets/sheet2.xml",sheetXml(d.s2));
   zip.file("xl/worksheets/sheet3.xml",sheetXml(d.s3));
   zip.file("xl/worksheets/sheet4.xml",sheetXml(d.s4));
+  zip.file("xl/worksheets/sheet5.xml",sheetXml(d.s5));
   zip.generateAsync({type:"blob",compression:"DEFLATE"}).then(function(blob){
     var dt=new Date(),p=function(n){return n<10?"0"+n:""+n;};
     var stamp=dt.getFullYear()+p(dt.getMonth()+1)+p(dt.getDate());
