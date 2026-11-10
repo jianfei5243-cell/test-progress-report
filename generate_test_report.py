@@ -22,6 +22,7 @@ import argparse
 import base64
 import datetime
 import glob
+import html
 import os
 import re
 import sys
@@ -43,6 +44,7 @@ except Exception:
 COL = dict(
     folder=2, priority=11, run=33, status=35,
     est_exec=3, est_mh=4, exec_time=37, mh_time=38, defects=42,
+    case=0, title=1, assigned=36, comment=45,
 )
 
 STATUS_ORDER = ["Passed", "Failed", "N/A", "Retest", "Untested"]
@@ -70,6 +72,12 @@ def find_latest_input(extra_dirs):
     return max(files, key=os.path.getmtime)
 
 
+def clean_html(s):
+    s = str(s)
+    s = re.sub(r"<[^>]+>", "", s)
+    return html.unescape(s).strip()
+
+
 def parse_minutes(v):
     if v is None:
         return 0.0
@@ -94,6 +102,7 @@ def load_and_aggregate(path):
     pri = defaultdict(Counter)     # 优先级 -> 状态计数
     defects = Counter()
     overall = Counter()
+    blocked = []
 
     total = 0
     est_exec = est_mh = exec_t = mh_t = 0.0
@@ -126,6 +135,17 @@ def load_and_aggregate(path):
                     if did:
                         defects[did] += 1
 
+        if st == "Blocked":
+            blocked.append({
+                "case": str(r[COL["case"]]),
+                "title": str(r[COL["title"]]),
+                "module": f.split(" > ")[0] if f and f != "None" else "",
+                "priority": p,
+                "run": rn,
+                "assigned": str(r[COL["assigned"]]),
+                "comment": clean_html(r[COL["comment"]]),
+            })
+
     wb.close()
 
     return {
@@ -135,6 +155,7 @@ def load_and_aggregate(path):
         "run": run,
         "pri": pri,
         "defects": defects,
+        "blocked": blocked,
         "minutes": {"est_exec": est_exec, "est_mh": est_mh,
                     "exec": exec_t, "mh": mh_t},
     }
@@ -223,6 +244,7 @@ def build_excel(path, data):
     fl = overall.get("Failed", 0)
     na = overall.get("N/A", 0)
     rt = overall.get("Retest", 0)
+    bl = overall.get("Blocked", 0)
 
     wb = Workbook()
     hdr_fill = PatternFill("solid", fgColor="2F5597")
@@ -242,6 +264,7 @@ def build_excel(path, data):
         ["失败 Failed", fl],
         ["不适用 N/A", na],
         ["待复测 Retest", rt],
+        ["Blocked Block", bl],
         ["通过率", f"{ps/(total-na):.1%}"],
         ["失败率", f"{fl/(total-na):.1%}"],
     ]
@@ -281,6 +304,25 @@ def build_excel(path, data):
         ws.freeze_panes = "A2"
         return len(rows) + 1
 
+    def write_blocked(ws, items):
+        headers = ["排名", "Case ID", "标题", "模块", "优先级", "Run", "负责人", "说明"]
+        for j, h in enumerate(headers, 1):
+            c = ws.cell(1, j, h)
+            c.fill = hdr_fill
+            c.font = hdr_font
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            c.border = border
+        for rank, it in enumerate(items, 1):
+            vals = [rank, it["case"], it["title"], it["module"], it["priority"],
+                    it["run"], it["assigned"], it["comment"]]
+            for j, v in enumerate(vals, 1):
+                c = ws.cell(rank + 1, j, v)
+                c.border = border
+                c.alignment = Alignment(horizontal="center", wrap_text=(j in (3, 8)))
+        for j, w in enumerate([6, 12, 42, 16, 10, 16, 12, 46], 1):
+            ws.column_dimensions[get_column_letter(j)].width = w
+        ws.freeze_panes = "A2"
+
     def write_defects(ws, items):
         headers = ["排名", "缺陷编号", "影响Case数"]
         for j, h in enumerate(headers, 1):
@@ -305,6 +347,9 @@ def build_excel(path, data):
 
     ws4 = wb.create_sheet("Top缺陷")
     write_defects(ws4, data["defects"].most_common(15))
+
+    ws5 = wb.create_sheet("Block数据")
+    write_blocked(ws5, data.get("blocked", []))
 
     topn = 15
     ch1 = BarChart()
@@ -353,6 +398,7 @@ def build_html(path, data, png_bytes, source_name, source_date):
     fl = overall.get("Failed", 0)
     na = overall.get("N/A", 0)
     rt = overall.get("Retest", 0)
+    bl = overall.get("Blocked", 0)
     minutes = data["minutes"]
 
     cards = [
@@ -363,6 +409,7 @@ def build_html(path, data, png_bytes, source_name, source_date):
         ("失败 Failed", f"{fl}"),
         ("不适用 N/A", f"{na}"),
         ("待复测 Retest", f"{rt}"),
+        ("Blocked Block", f"{bl}"),
         ("通过率", f"{ps/(total-na):.1%}"),
         ("失败率", f"{fl/(total-na):.1%}"),
     ]
@@ -398,6 +445,17 @@ def build_html(path, data, png_bytes, source_name, source_date):
     defects_html = "".join(
         f"<li><code>{esc(d)}</code><span>{n} 条</span></li>" for d, n in defects
     )
+
+    blocked_rows = []
+    for i, it in enumerate(data.get("blocked", []), 1):
+        blocked_rows.append(
+            "<tr><td>{}</td><td>{}</td><td class='l'>{}</td><td>{}</td>"
+            "<td>{}</td><td class='l'>{}</td></tr>".format(
+                i, esc(it["case"]), esc(it["title"]), esc(it["module"]),
+                esc(it["assigned"]), esc(it["comment"]),
+            )
+        )
+    blocked_html = "".join(blocked_rows)
 
     chart_html = ""
     if png_bytes:
@@ -457,6 +515,12 @@ ul.def code {{ color:#b91c1c; }}
 
   <h2>Top 缺陷</h2>
   <ul class="def">{defects_html}</ul>
+
+  <h2>Block 数据（挂起）</h2>
+  <table>
+    <thead><tr><th>排名</th><th>Case ID</th><th>标题</th><th>模块</th><th>负责人</th><th>说明</th></tr></thead>
+    <tbody>{blocked_html}</tbody>
+  </table>
 
   <h2>人力投入</h2>
   <div class="info">
