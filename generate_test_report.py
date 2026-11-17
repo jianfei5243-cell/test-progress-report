@@ -22,7 +22,6 @@ import argparse
 import base64
 import datetime
 import glob
-import html
 import os
 import re
 import sys
@@ -44,7 +43,6 @@ except Exception:
 COL = dict(
     folder=2, priority=11, run=33, status=35,
     est_exec=3, est_mh=4, exec_time=37, mh_time=38, defects=42,
-    case=0, title=1, assigned=36, comment=45,
 )
 
 STATUS_ORDER = ["Passed", "Failed", "N/A", "Retest", "Untested"]
@@ -72,12 +70,6 @@ def find_latest_input(extra_dirs):
     return max(files, key=os.path.getmtime)
 
 
-def clean_html(s):
-    s = str(s)
-    s = re.sub(r"<[^>]+>", "", s)
-    return html.unescape(s).strip()
-
-
 def parse_minutes(v):
     if v is None:
         return 0.0
@@ -102,7 +94,6 @@ def load_and_aggregate(path):
     pri = defaultdict(Counter)     # 优先级 -> 状态计数
     defects = Counter()
     overall = Counter()
-    blocked = []
 
     total = 0
     est_exec = est_mh = exec_t = mh_t = 0.0
@@ -135,17 +126,6 @@ def load_and_aggregate(path):
                     if did:
                         defects[did] += 1
 
-        if st == "Blocked":
-            blocked.append({
-                "case": str(r[COL["case"]]),
-                "title": str(r[COL["title"]]),
-                "module": f.split(" > ")[0] if f and f != "None" else "",
-                "priority": p,
-                "run": rn,
-                "assigned": str(r[COL["assigned"]]),
-                "comment": clean_html(r[COL["comment"]]),
-            })
-
     wb.close()
 
     return {
@@ -155,7 +135,6 @@ def load_and_aggregate(path):
         "run": run,
         "pri": pri,
         "defects": defects,
-        "blocked": blocked,
         "minutes": {"est_exec": est_exec, "est_mh": est_mh,
                     "exec": exec_t, "mh": mh_t},
     }
@@ -169,9 +148,10 @@ def agg(c):
     fl = c.get("Failed", 0)
     na = c.get("N/A", 0)
     rt = c.get("Retest", 0)
+    bl = c.get("Blocked", 0)
     return {
         "总": tot, "未执行": unt, "已执行": ex,
-        "通过": ps, "失败": fl, "N/A": na, "Retest": rt,
+        "通过": ps, "失败": fl, "N/A": na, "Retest": rt, "Block": bl,
         "执行率": round(ex / tot * 100, 1) if tot else 0.0,
         "通过率": round(ps / (tot - na) * 100, 1) if (tot - na) else None,
     }
@@ -280,7 +260,7 @@ def build_excel(path, data):
     ws1.column_dimensions["B"].width = 16
 
     def write_table(ws, mapping):
-        headers = ["模块", "用例总数", "未执行", "通过", "失败", "N/A", "Retest", "执行率%", "通过率%"]
+        headers = ["模块", "用例总数", "未执行", "通过", "失败", "N/A", "Retest", "Block", "执行率%", "通过率%"]
         for j, h in enumerate(headers, 1):
             c = ws.cell(1, j, h)
             c.fill = hdr_fill
@@ -291,7 +271,7 @@ def build_excel(path, data):
         for i, (name, cnt) in enumerate(rows, 2):
             d = agg(cnt)
             vals = [name, d["总"], d["未执行"], d["通过"], d["失败"], d["N/A"], d["Retest"],
-                    d["执行率"], d["通过率"]]
+                    d["Block"], d["执行率"], d["通过率"]]
             for j, v in enumerate(vals, 1):
                 c = ws.cell(i, j, v)
                 c.border = border
@@ -299,29 +279,10 @@ def build_excel(path, data):
                     c.alignment = Alignment(horizontal="center")
                 if j == 9 and v is None:
                     c.value = "-"
-        for j, w in enumerate([30, 12, 12, 12, 12, 10, 10, 12, 12], 1):
+        for j, w in enumerate([30, 12, 12, 12, 12, 10, 10, 10, 12, 12], 1):
             ws.column_dimensions[get_column_letter(j)].width = w
         ws.freeze_panes = "A2"
         return len(rows) + 1
-
-    def write_blocked(ws, items):
-        headers = ["排名", "Case ID", "标题", "模块", "优先级", "Run", "负责人", "说明"]
-        for j, h in enumerate(headers, 1):
-            c = ws.cell(1, j, h)
-            c.fill = hdr_fill
-            c.font = hdr_font
-            c.alignment = Alignment(horizontal="center", vertical="center")
-            c.border = border
-        for rank, it in enumerate(items, 1):
-            vals = [rank, it["case"], it["title"], it["module"], it["priority"],
-                    it["run"], it["assigned"], it["comment"]]
-            for j, v in enumerate(vals, 1):
-                c = ws.cell(rank + 1, j, v)
-                c.border = border
-                c.alignment = Alignment(horizontal="center", wrap_text=(j in (3, 8)))
-        for j, w in enumerate([6, 12, 42, 16, 10, 16, 12, 46], 1):
-            ws.column_dimensions[get_column_letter(j)].width = w
-        ws.freeze_panes = "A2"
 
     def write_defects(ws, items):
         headers = ["排名", "缺陷编号", "影响Case数"]
@@ -348,9 +309,6 @@ def build_excel(path, data):
     ws4 = wb.create_sheet("Top缺陷")
     write_defects(ws4, data["defects"].most_common(15))
 
-    ws5 = wb.create_sheet("Block数据")
-    write_blocked(ws5, data.get("blocked", []))
-
     topn = 15
     ch1 = BarChart()
     ch1.type = "bar"
@@ -358,7 +316,7 @@ def build_excel(path, data):
     ch1.title = "功能模块执行率（Top15）"
     ch1.y_axis.title = "模块"
     ch1.x_axis.title = "执行率 %"
-    ch1.add_data(Reference(ws2, min_col=8, min_row=1, max_row=min(topn + 1, n2)), titles_from_data=True)
+    ch1.add_data(Reference(ws2, min_col=9, min_row=1, max_row=min(topn + 1, n2)), titles_from_data=True)
     ch1.set_categories(Reference(ws2, min_col=1, min_row=2, max_row=min(topn + 1, n2)))
     ch1.width, ch1.height = 20, 11
     ws2.add_chart(ch1, "K2")
@@ -370,7 +328,7 @@ def build_excel(path, data):
     ch2.title = "功能模块状态分布（Top15）"
     ch2.y_axis.title = "模块"
     ch2.x_axis.title = "用例数"
-    ch2.add_data(Reference(ws2, min_col=3, max_col=7, min_row=1, max_row=min(topn + 1, n2)), titles_from_data=True)
+    ch2.add_data(Reference(ws2, min_col=3, max_col=8, min_row=1, max_row=min(topn + 1, n2)), titles_from_data=True)
     ch2.set_categories(Reference(ws2, min_col=1, min_row=2, max_row=min(topn + 1, n2)))
     ch2.width, ch2.height = 20, 11
     ws2.add_chart(ch2, "K22")
@@ -425,9 +383,9 @@ def build_html(path, data, png_bytes, source_name, source_date):
             d = agg(cnt)
             trs.append(
                 "<tr><td class='l'>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td>"
-                "<td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>".format(
+                "<td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>".format(
                     esc(name), d["总"], d["未执行"], d["通过"], d["失败"],
-                    d["N/A"], d["Retest"], pct(d["执行率"]), pct(d["通过率"]),
+                    d["N/A"], d["Retest"], d["Block"], pct(d["执行率"]), pct(d["通过率"]),
                 )
             )
         return f"""
@@ -436,26 +394,16 @@ def build_html(path, data, png_bytes, source_name, source_date):
           <tbody>{''.join(trs)}</tbody>
         </table>"""
 
-    pri_header = ["优先级", "用例总数", "未执行", "通过", "失败", "N/A", "Retest", "执行率%", "通过率%"]
+    pri_header = ["优先级", "用例总数", "未执行", "通过", "失败", "N/A", "Retest", "Block", "执行率%", "通过率%"]
     pri_html = table_html(data["pri"], pri_header)
-    mod_html = table_html(data["mod"], ["模块", "用例总数", "未执行", "通过", "失败", "N/A", "Retest", "执行率%", "通过率%"])
-    run_html = table_html(data["run"], ["测试批次", "用例总数", "未执行", "通过", "失败", "N/A", "Retest", "执行率%", "通过率%"])
+    mod_html = table_html(data["mod"], ["模块", "用例总数", "未执行", "通过", "失败", "N/A", "Retest", "Block", "执行率%", "通过率%"])
+    run_html = table_html(data["run"], ["测试批次", "用例总数", "未执行", "通过", "失败", "N/A", "Retest", "Block", "执行率%", "通过率%"])
 
     defects = data["defects"].most_common(15)
     defects_html = "".join(
         f"<li><code>{esc(d)}</code><span>{n} 条</span></li>" for d, n in defects
     )
 
-    blocked_rows = []
-    for i, it in enumerate(data.get("blocked", []), 1):
-        blocked_rows.append(
-            "<tr><td>{}</td><td>{}</td><td class='l'>{}</td><td>{}</td>"
-            "<td>{}</td><td class='l'>{}</td></tr>".format(
-                i, esc(it["case"]), esc(it["title"]), esc(it["module"]),
-                esc(it["assigned"]), esc(it["comment"]),
-            )
-        )
-    blocked_html = "".join(blocked_rows)
 
     chart_html = ""
     if png_bytes:
@@ -515,12 +463,6 @@ ul.def code {{ color:#b91c1c; }}
 
   <h2>Top 缺陷</h2>
   <ul class="def">{defects_html}</ul>
-
-  <h2>Block 数据（挂起）</h2>
-  <table>
-    <thead><tr><th>排名</th><th>Case ID</th><th>标题</th><th>模块</th><th>负责人</th><th>说明</th></tr></thead>
-    <tbody>{blocked_html}</tbody>
-  </table>
 
   <h2>人力投入</h2>
   <div class="info">
